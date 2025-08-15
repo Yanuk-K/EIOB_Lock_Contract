@@ -4,7 +4,7 @@ import { time } from "@nomicfoundation/hardhat-network-helpers";
 
 describe("EIOBLock", function () {
   const ONE_YEAR_IN_SECS = 365 * 24 * 60 * 60;
-  const LOCK_AMOUNT = hre.ethers.parseEther("1"); // 1 ether (you can change the value)
+  const LOCK_AMOUNT = hre.ethers.parseEther("1"); // 1 EIOB (you can change the value)
 
   let lockContract: any;
   let owner: any;
@@ -41,7 +41,7 @@ describe("EIOBLock", function () {
   it("should lock funds and emit EIOBLocked", async function () {
     const unlockTime = (await time.latest()) + ONE_YEAR_IN_SECS;
 
-    // Lock 1 ether for userA
+    // Lock 1 EIOB for userA
     const tx = await lockContract.connect(owner).Lock(userA.address, unlockTime, { value: LOCK_AMOUNT });
     const receipt = await tx.wait();
 
