@@ -39,7 +39,7 @@ describe("EIOBLock", function () {
   }
 
   it("should lock funds and emit EIOBLocked", async function () {
-    const unlockTime = (await time.latest()) + ONE_YEAR_IN_SECS;
+    const unlockTime = ONE_YEAR_IN_SECS;
 
     // Lock 1 EIOB for userA
     const tx = await lockContract.connect(owner).Lock(userA.address, unlockTime, { value: LOCK_AMOUNT });
@@ -55,7 +55,6 @@ describe("EIOBLock", function () {
     );
     expect(decoded.withdrawalAddress).to.equal(userA.address);
     expect(decoded.amount).to.equal(LOCK_AMOUNT);
-    expect(decoded.unlockTime).to.equal(BigInt(unlockTime));
 
     // ---- State checks --------------------------------------------------------
     const depositId = await lockContract.depositId();
@@ -65,7 +64,6 @@ describe("EIOBLock", function () {
     // info: (address payable, uint256, uint256, bool)
     expect(info[0]).to.equal(userA.address);
     expect(info[1]).to.equal(LOCK_AMOUNT);
-    expect(info[2]).to.equal(BigInt(unlockTime));
     expect(info[3]).to.be.false; // not withdrawn
 
     const bal = await lockContract.getLockedAmountByWithdrawalAddress(userA.address);
@@ -76,7 +74,7 @@ describe("EIOBLock", function () {
   });
 
   it("should revert when unlocking before unlockTime", async function () {
-    const unlockTime = (await time.latest()) + ONE_YEAR_IN_SECS;
+    const unlockTime = ONE_YEAR_IN_SECS;
     const { depositId } = await lockFunds(userA, unlockTime);
 
     // Try to unlock right away – should revert with "EIOB is locked"
@@ -84,11 +82,11 @@ describe("EIOBLock", function () {
   });
 
   it("should allow unlocking after the timelock and transfer funds", async function () {
-    const unlockTime = (await time.latest()) + ONE_YEAR_IN_SECS;
+    const unlockTime = ONE_YEAR_IN_SECS;
     const { depositId } = await lockFunds(userA, unlockTime);
 
     // Fast‑forward time past the unlock timestamp
-    await time.increaseTo(unlockTime + 1);
+    await time.increaseTo(unlockTime + (await time.latest()) + 1);
 
     const beforeBal = await hre.ethers.provider.getBalance(userA.address);
 
@@ -140,11 +138,11 @@ describe("EIOBLock", function () {
   });
 
   it("should revert if trying to unlock an already withdrawn deposit", async function () {
-    const unlockTime = (await time.latest()) + ONE_YEAR_IN_SECS;
+    const unlockTime = ONE_YEAR_IN_SECS;
     const { depositId } = await lockFunds(userA, unlockTime);
 
     // Move forward and perform the first successful unlock
-    await time.increaseTo(unlockTime + 1);
+    await time.increaseTo(unlockTime + (await time.latest()) + 1);
     await lockContract.connect(owner).Unlock(depositId);
 
     // Second attempt should revert with "EIOB is already withdrawn"

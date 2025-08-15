@@ -22,22 +22,23 @@ contract EIOBLock is ReentrancyGuard {
     event EIOBLocked(address indexed withdrawalAddress, uint256 amount, uint256 unlockTime, uint256 depositId);
     event EIOBUnlocked(address indexed withdrawalAddress, uint amount);
 
+    // _unlockTime is time from transaction (in seconds), not the absolute time.
     function Lock(address payable _withdrawalAddress, uint256 _unlockTime) external payable returns (uint256 _id) {
         require(msg.value > 0, 'You need to have > 0 EIOB locked up');
         require(_unlockTime < 10000000000, 'Unix timestamp must be in seconds, not milliseconds');
-        require(_unlockTime > block.timestamp, 'Unlock time must be in future');
+        require(_unlockTime > 0, 'Unlock time must be in future');
 
         balanceInfo[_withdrawalAddress] = balanceInfo[_withdrawalAddress] + msg.value;
 
         _id = ++depositId;
         lockedInfo[_id].withdrawalAddress = _withdrawalAddress;
         lockedInfo[_id].lockedAmount = msg.value;
-        lockedInfo[_id].unlockTime = _unlockTime;
+        lockedInfo[_id].unlockTime = block.timestamp + _unlockTime;
         lockedInfo[_id].withdrawn = false;
 
         allDepositIds.push(_id);
         
-        emit EIOBLocked(_withdrawalAddress, msg.value, _unlockTime, depositId);
+        emit EIOBLocked(_withdrawalAddress, msg.value, lockedInfo[_id].unlockTime, depositId);
     }
 
     // Does not matter who unlocks since timelock is in place

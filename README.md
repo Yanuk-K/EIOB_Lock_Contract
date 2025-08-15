@@ -1,6 +1,6 @@
 # EIOB Lock smart contract for EIOB Mainnet.
 
-Locks EIOB until set time in UTC. Anyone can unlock since EIOB will only get sent to the recipient set during lockup.
+Locks EIOB until set time(in seconds) from current block. Anyone can unlock since EIOB will only get sent to the recipient set during lockup.
 
 Needs manual unlocking by calling **Unlock(_id)**. Using Lambda functions to automatically unlock also works.
 
