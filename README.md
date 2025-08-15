@@ -1,0 +1,13 @@
+# EIOB Lock smart contract for EIOB Mainnet.
+
+Locks EIOB until set time in UTC. Anyone can unlock since EIOB will only get sent to the recipient set during lockup.
+
+Needs manual unlocking by calling **Unlock(_id)**. Using Lambda functions to automatically unlock also works.
+
+### To set up:
+
+```git clone [this repository] && cd EIOB_Lock_Contract && npm install```
+
+### To test:
+
+```npx hardhat test test/EIOBLock-test.ts```
