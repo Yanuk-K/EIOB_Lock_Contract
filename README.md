@@ -11,3 +11,11 @@ Needs manual unlocking by calling **Unlock(_id)**. Using Lambda functions to aut
 ### To test:
 
 ```npx hardhat test test/EIOBLock-test.ts```
+
+### To deploy (setup env first):
+
+```npx hardhat ignition deploy .ignition/modules/EIOBLockModule.js --network eiob```
+
+### To verify contract:
+
+```npx hardhat verify --network eiob [contract address]```
