@@ -56,7 +56,8 @@ contract EIOBLock is ReentrancyGuard {
         balanceInfo[withdrawalAddress] = oldBalance - lockedAmount;
 
         // Send EIOB
-        withdrawalAddress.transfer(lockedAmount);
+        (bool sent, ) = withdrawalAddress.call{value: lockedAmount}("");
+        require(sent, "EIOB transfer failed");
 
         emit EIOBUnlocked(withdrawalAddress, lockedAmount);
     }

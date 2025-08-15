@@ -55,6 +55,7 @@ describe("EIOBLock", function () {
     );
     expect(decoded.withdrawalAddress).to.equal(userA.address);
     expect(decoded.amount).to.equal(LOCK_AMOUNT);
+    expect(decoded.unlockTime).to.equal(BigInt(unlockTime + (await time.latest())));
 
     // ---- State checks --------------------------------------------------------
     const depositId = await lockContract.depositId();
@@ -64,6 +65,7 @@ describe("EIOBLock", function () {
     // info: (address payable, uint256, uint256, bool)
     expect(info[0]).to.equal(userA.address);
     expect(info[1]).to.equal(LOCK_AMOUNT);
+    expect(info[2]).to.equal(unlockTime + (await time.latest()));
     expect(info[3]).to.be.false; // not withdrawn
 
     const bal = await lockContract.getLockedAmountByWithdrawalAddress(userA.address);
