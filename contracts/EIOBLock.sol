@@ -33,14 +33,14 @@ contract EIOBLock is ReentrancyGuard {
 
         _id = ++depositId;
         lockedInfo[_id].withdrawalAddress = _withdrawalAddress;
-        lockedInfo[_id].lockedAddresses = _lockedAddresses;
+        lockedInfo[_id].unlockAddresses = _unlockAddresses;
         lockedInfo[_id].lockedAmount = msg.value;
         lockedInfo[_id].unlockTime = block.timestamp + _unlockTime;
         lockedInfo[_id].withdrawn = false;
 
         allDepositIds.push(_id);
         
-        emit EIOBLocked(_withdrawalAddress, msg.value, lockedInfo[_id].unlockTime, depositId);
+        emit EIOBLocked(_withdrawalAddress, _unlockAddresses, msg.value, lockedInfo[_id].unlockTime, depositId);
     }
 
     // Does not matter who unlocks since timelock is in place
@@ -49,10 +49,10 @@ contract EIOBLock is ReentrancyGuard {
         require(block.timestamp >= lockedInfo[_id].unlockTime, 'EIOB is locked');
         require(!lockedInfo[_id].withdrawn, 'EIOB is already withdrawn');
         bool withdraw = false;
-        if (lockedInfo[_id].lockedAddresses.length == 0) withdraw = true;
+        if (lockedInfo[_id].unlockAddresses.length == 0) withdraw = true;
         else {
-            for (uint256 i = 0; i < lockedInfo[_id].lockedAddresses.length; i++) {
-                if(msg.sender == lockedInfo[_id].lockedAddresses[i]) withdraw = true;
+            for (uint256 i = 0; i < lockedInfo[_id].unlockAddresses.length; i++) {
+                if(msg.sender == lockedInfo[_id].unlockAddresses[i]) withdraw = true;
             }
         }
         require(withdraw, "Only authorized accounts can unlock");
