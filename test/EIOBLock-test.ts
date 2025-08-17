@@ -2,152 +2,254 @@ import { expect } from "chai";
 import hre from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
 
-describe("EIOBLock", function () {
+describe("EIOBLock (authorised unlock addresses)", function () {
+  // -------------------------------------------------------------------------
+  // Constants & helpers (all via `hre`)
+  // -------------------------------------------------------------------------
   const ONE_YEAR_IN_SECS = 365 * 24 * 60 * 60;
-  const LOCK_AMOUNT = hre.ethers.parseEther("1"); // 1 EIOB (you can change the value)
+  const LOCK_AMOUNT = hre.ethers.parseEther("1");  // 1 ETH
 
-  let lockContract: any;
   let owner: any;
-  let userA: any;
-  let userB: any;
+  let withdrawer: any;   // address that will receive the funds
+  let authA: any;        // authorised unlocker A
+  let authB: any;        // authorised unlocker B
+  let stranger: any;     // not in whitelist
+  let lock: any;         // EIOBLock instance
 
   /** Deploy a fresh contract before each test */
   beforeEach(async function () {
-    [owner, userA, userB] = await hre.ethers.getSigners();
+    [owner, withdrawer, authA, authB, stranger] = await hre.ethers.getSigners();
 
-    // Deploy the EIOBLock contract (no constructor args)
-    lockContract = await hre.ethers.deployContract("EIOBLock", [], {});
+    lock = await hre.ethers.deployContract("EIOBLock");
+    await lock.waitForDeployment();
 
-    // Make sure we start with a clean state
-    expect(await lockContract.depositId()).to.equal(0n);
+    expect(await lock.depositId()).to.equal(0);
   });
 
-  /** Helper: lock funds for a given withdrawal address */
-  async function lockFunds(
-    withdrawer: any,
-    unlockTime: number,
-    amount: bigint = LOCK_AMOUNT
+  /** Helper – create a lock and return the deposit id + start timestamp */
+  async function createLock(
+    withdrawal: any,
+    unlockAddrs: any[],          // array of addresses that may call Unlock
+    relUnlockTime: number,       // seconds *from now* (contract adds block.timestamp)
+    amount = LOCK_AMOUNT
   ) {
-    const tx = await lockContract.connect(owner).Lock(withdrawer.address, unlockTime, {
-      value: amount,
-    });
-    const receipt = await tx.wait();
-    const event = receipt?.logs?.find((l) => l.topics[0] === hre.ethers.id("EIOBLocked(address,uint256,uint256,uint256)"));
-    const depositId = await lockContract.depositId();
-
-    return { receipt, event, depositId };
+    const tx = await lock
+      .connect(owner)
+      .Lock(withdrawal.address, unlockAddrs.map((a) => a.address), relUnlockTime, {
+        value: amount,
+      });
+    await tx.wait();
+    const startTs = (await hre.ethers.provider.getBlock('latest'))?.timestamp; // timestamp just before the tx
+    const depId = await lock.depositId(); // incremented after the call
+    return { depositId: depId, startTs };
   }
 
-  it("should lock funds and emit EIOBLocked", async function () {
-    const unlockTime = ONE_YEAR_IN_SECS;
+  it("locks funds, emits EIOBLocked and allows anyone to unlock when no authorised list", async function () {
+    const relUnlock = ONE_YEAR_IN_SECS;
+    const { depositId, startTs } = await createLock(withdrawer, [], relUnlock);
 
-    // Lock 1 EIOB for userA
-    const tx = await lockContract.connect(owner).Lock(userA.address, unlockTime, { value: LOCK_AMOUNT });
-    const receipt = await tx.wait();
+    // event check (empty whitelist)
+    await expect(
+      lock.connect(owner).Lock(withdrawer.address, [], relUnlock, { value: LOCK_AMOUNT })
+    )
+      .to.emit(lock, "EIOBLocked")
+      .withArgs(
+        withdrawer.address,
+        [],                     // empty array
+        LOCK_AMOUNT,
+        startTs + relUnlock + 1,   // absolute unlock time stored in contract
+        depositId + BigInt(1)          // because we just emitted a *new* lock in this expect()
+      );
 
-    // ---- Event check --------------------------------------------------------
-    const ev = receipt?.logs?.find((l) => l.topics[0] === hre.ethers.id("EIOBLocked(address,uint256,uint256,uint256)"));
-    expect(ev).to.not.be.undefined;
-    const decoded = lockContract.interface.decodeEventLog(
-      "EIOBLocked",
-      ev!.data,
-      ev!.topics
+    const [wAddr, lockedAmt, absUnlock, withdrawn] =
+      await lock.getDepositDetails(depositId);
+    expect(wAddr).to.equal(withdrawer.address);
+    expect(lockedAmt).to.equal(LOCK_AMOUNT);
+    expect(absUnlock).to.equal(startTs + relUnlock);
+    expect(withdrawn).to.be.false;
+  });
+
+  it("only authorised addresses can unlock when whitelist is non‑empty", async function () {
+    const relUnlock = ONE_YEAR_IN_SECS;
+    const { depositId, startTs } = await createLock(withdrawer, [authA], relUnlock);
+
+    await time.increaseTo(startTs + relUnlock + 1);
+
+    // unauthorised address → revert
+    await expect(lock.connect(stranger).Unlock(depositId))
+      .to.be.revertedWith("Only authorized accounts can unlock");
+
+    // authorised address succeeds
+    await expect(lock.connect(authA).Unlock(depositId))
+      .to.emit(lock, "EIOBUnlocked")
+      .withArgs(withdrawer.address, LOCK_AMOUNT);
+
+    const [, , , withdrawn] = await lock.getDepositDetails(depositId);
+    expect(withdrawn).to.be.true;
+  });
+
+  it("anyone can unlock after timelock when no whitelist is set", async function () {
+    const relUnlock = ONE_YEAR_IN_SECS;
+    const { depositId, startTs } = await createLock(withdrawer, [], relUnlock);
+
+    await time.increaseTo(startTs + relUnlock + 1);
+    // stranger (not the withdrawal address) unlocks successfully
+    await expect(lock.connect(stranger).Unlock(depositId))
+      .to.emit(lock, "EIOBUnlocked")
+      .withArgs(withdrawer.address, LOCK_AMOUNT);
+  });
+
+  it("reverts when trying to unlock a deposit that has already been withdrawn", async function () {
+    const relUnlock = ONE_YEAR_IN_SECS;
+    const { depositId, startTs } = await createLock(withdrawer, [], relUnlock);
+
+    await time.increaseTo(startTs + relUnlock + 1);
+    await lock.connect(stranger).Unlock(depositId); // first withdraw
+
+    await expect(lock.connect(stranger).Unlock(depositId))
+      .to.be.revertedWith("EIOB is already withdrawn");
+  });
+
+  it("handles several deposits for one withdrawal address correctly", async function () {
+    const now = await time.latest();
+
+    // first deposit – empty whitelist
+    await createLock(withdrawer, [], ONE_YEAR_IN_SECS);
+    // second deposit – also empty whitelist but different amount
+    const half = hre.ethers.parseEther("0.5");
+    const tx2 = await lock
+      .connect(owner)
+      .Lock(withdrawer.address, [], ONE_YEAR_IN_SECS * 2, { value: half });
+    await tx2.wait();
+
+    expect(await lock.depositId()).to.equal(2);
+
+    const total = await lock.getLockedAmountByWithdrawalAddress(withdrawer.address);
+    expect(total).to.equal(LOCK_AMOUNT + half);
+
+    const ids = await lock.getAllDepositIds();
+    expect(ids.map((x: any) => Number(x))).to.deep.equal([1, 2]);
+  });
+
+  it("any of several authorised addresses can unlock once the timelock expires", async function () {
+    const relUnlock = ONE_YEAR_IN_SECS;
+    const { depositId, startTs } = await createLock(
+      withdrawer,
+      [authA, authB],               // two accounts in whitelist
+      relUnlock
     );
-    expect(decoded.withdrawalAddress).to.equal(userA.address);
-    expect(decoded.amount).to.equal(LOCK_AMOUNT);
-    expect(decoded.unlockTime).to.equal(BigInt(unlockTime + (await time.latest())));
 
-    // ---- State checks --------------------------------------------------------
-    const depositId = await lockContract.depositId();
-    expect(depositId).to.equal(BigInt(1)); // first deposit
+    await time.increaseTo(startTs + relUnlock + 1);
 
-    const info = await lockContract.getDepositDetails(depositId);
-    // info: (address payable, uint256, uint256, bool)
-    expect(info[0]).to.equal(userA.address);
-    expect(info[1]).to.equal(LOCK_AMOUNT);
-    expect(info[2]).to.equal(unlockTime + (await time.latest()));
-    expect(info[3]).to.be.false; // not withdrawn
+    // authA can unlock
+    await expect(lock.connect(authA).Unlock(depositId))
+      .to.emit(lock, "EIOBUnlocked")
+      .withArgs(withdrawer.address, LOCK_AMOUNT);
 
-    const bal = await lockContract.getLockedAmountByWithdrawalAddress(userA.address);
-    expect(bal).to.equal(LOCK_AMOUNT);
-
-    const allIds = await lockContract.getAllDepositIds();
-    expect(allIds.map((n: any) => n)).to.deep.equal([BigInt(1)]);
+    const [, , , withdrawn] = await lock.getDepositDetails(depositId);
+    expect(withdrawn).to.be.true;
   });
 
-  it("should revert when unlocking before unlockTime", async function () {
-    const unlockTime = ONE_YEAR_IN_SECS;
-    const { depositId } = await lockFunds(userA, unlockTime);
-
-    // Try to unlock right away – should revert with "EIOB is locked"
-    await expect(lockContract.connect(owner).Unlock(depositId)).to.be.revertedWith("EIOB is locked");
-  });
-
-  it("should allow unlocking after the timelock and transfer funds", async function () {
-    const unlockTime = ONE_YEAR_IN_SECS;
-    const { depositId } = await lockFunds(userA, unlockTime);
-
-    // Fast‑forward time past the unlock timestamp
-    await time.increaseTo(unlockTime + (await time.latest()) + 1);
-
-    const beforeBal = await hre.ethers.provider.getBalance(userA.address);
-
-    // Unlock – should succeed and emit EIOBUnlocked
-    const tx = await lockContract.connect(owner).Unlock(depositId);
-    const receipt = await tx.wait();
-
-    const ev = receipt?.logs?.find((l) => l.topics[0] === hre.ethers.id("EIOBUnlocked(address,uint256)"));
-    expect(ev).to.not.be.undefined;
-    const decoded = lockContract.interface.decodeEventLog(
-      "EIOBUnlocked",
-      ev!.data,
-      ev!.topics
+  it("a second authorised address cannot unlock the same deposit after it has been withdrawn", async function () {
+    const relUnlock = ONE_YEAR_IN_SECS;
+    const { depositId, startTs } = await createLock(
+      withdrawer,
+      [authA, authB],
+      relUnlock
     );
-    expect(decoded.withdrawalAddress).to.equal(userA.address);
-    expect(decoded.amount).to.equal(LOCK_AMOUNT);
 
-    // Balance of userA should have increased by exactly LOCK_AMOUNT (minus gas)
-    const afterBal = await hre.ethers.provider.getBalance(userA.address);
-    expect(Number(afterBal - beforeBal)).to.be.closeTo(Number(LOCK_AMOUNT), Number(hre.ethers.parseEther("0.001"))); // tiny tolerance for gas
+    await time.increaseTo(startTs + relUnlock + 1);
 
-    // State updates
-    const info = await lockContract.getDepositDetails(depositId);
-    expect(info[3]).to.be.true; // withdrawn flag
+    // First authorised address performs the withdrawal
+    await lock.connect(authA).Unlock(depositId);
 
-    const balInfo = await lockContract.getLockedAmountByWithdrawalAddress(userA.address);
-    expect(balInfo).to.equal(BigInt(0));
+    // Second authorised address now attempts – should revert with “already withdrawn”
+    await expect(lock.connect(authB).Unlock(depositId))
+      .to.be.revertedWith("EIOB is already withdrawn");
   });
 
-  it("should correctly handle multiple deposits for the same address", async function () {
-    const unlockTime1 = (await time.latest()) + ONE_YEAR_IN_SECS;
-    const unlockTime2 = unlockTime1 + ONE_YEAR_IN_SECS;
+  it("addresses NOT in the whitelist cannot unlock even after timelock", async function () {
+    const relUnlock = ONE_YEAR_IN_SECS;
+    const { depositId, startTs } = await createLock(
+      withdrawer,
+      [authA],        // only authA is allowed
+      relUnlock
+    );
 
-    // First deposit
-    await lockContract.connect(owner).Lock(userB.address, unlockTime1, { value: LOCK_AMOUNT });
-    // Second deposit (different amount)
-    const secondAmount = hre.ethers.parseEther("0.5");
-    await lockContract.connect(owner).Lock(userB.address, unlockTime2, { value: secondAmount });
+    await time.increaseTo(startTs + relUnlock + 1);
 
-    expect(await lockContract.depositId()).to.equal(BigInt(2));
-
-    // The aggregate balance for userB should be the sum of both deposits
-    const totalLocked = await lockContract.getLockedAmountByWithdrawalAddress(userB.address);
-    expect(totalLocked).to.equal(LOCK_AMOUNT + secondAmount);
-
-    // All deposit IDs returned in order
-    const allIds = await lockContract.getAllDepositIds();
-    expect(allIds.map((n: any) => Number(n))).to.deep.equal([1, 2]);
+    // stranger (not in whitelist) → revert
+    await expect(lock.connect(stranger).Unlock(depositId))
+      .to.be.revertedWith("Only authorized accounts can unlock");
   });
 
-  it("should revert if trying to unlock an already withdrawn deposit", async function () {
-    const unlockTime = ONE_YEAR_IN_SECS;
-    const { depositId } = await lockFunds(userA, unlockTime);
+  it("the withdrawal address itself may be placed in the whitelist and can unlock", async function () {
+    const relUnlock = ONE_YEAR_IN_SECS;
+    // Put the *withdrawal* address into the whitelist
+    const { depositId, startTs } = await createLock(
+      withdrawer,
+      [withdrawer],   // whitelist contains only the withdrawal address
+      relUnlock
+    );
 
-    // Move forward and perform the first successful unlock
-    await time.increaseTo(unlockTime + (await time.latest()) + 1);
-    await lockContract.connect(owner).Unlock(depositId);
+    await time.increaseTo(startTs + relUnlock + 1);
 
-    // Second attempt should revert with "EIOB is already withdrawn"
-    await expect(lockContract.connect(owner).Unlock(depositId)).to.be.revertedWith('EIOB is already withdrawn');
+    // The withdrawal address calls Unlock – should succeed
+    await expect(lock.connect(withdrawer).Unlock(depositId))
+      .to.emit(lock, "EIOBUnlocked")
+      .withArgs(withdrawer.address, LOCK_AMOUNT);
+  });
+
+  it("duplicate entries in whitelist do not affect authorisation logic", async function () {
+    const relUnlock = ONE_YEAR_IN_SECS;
+    // Duplicate authA twice
+    const { depositId, startTs } = await createLock(
+      withdrawer,
+      [authA, authA],
+      relUnlock
+    );
+
+    await time.increaseTo(startTs + relUnlock + 1);
+
+    // Any of the duplicates (i.e., authA) can unlock – still works
+    await expect(lock.connect(authA).Unlock(depositId))
+      .to.emit(lock, "EIOBUnlocked")
+      .withArgs(withdrawer.address, LOCK_AMOUNT);
+  });
+
+  it("multiple deposits with distinct whitelists each respect their own authorisation", async function () {
+    // Deposit 1 – whitelist: authA
+    const relUnlock1 = ONE_YEAR_IN_SECS;
+    const { depositId: id1, startTs: ts1 } = await createLock(
+      withdrawer,
+      [authA],
+      relUnlock1
+    );
+
+    // Deposit 2 – whitelist: authB
+    const relUnlock2 = ONE_YEAR_IN_SECS * 2;
+    const { depositId: id2, startTs: ts2 } = await createLock(
+      withdrawer,
+      [authB],
+      relUnlock2
+    );
+
+    // Fast‑forward to after the first lock but **before** the second one expires
+    await time.increaseTo(ts1 + relUnlock1 + 1);
+
+    // authA can unlock deposit 1
+    await expect(lock.connect(authA).Unlock(id1))
+      .to.emit(lock, "EIOBUnlocked")
+      .withArgs(withdrawer.address, LOCK_AMOUNT);
+
+    // authB should still be blocked for deposit 2 because its timelock isn’t reached yet
+    await expect(lock.connect(authB).Unlock(id2))
+      .to.be.revertedWith("EIOB is locked");
+
+    // Move forward beyond the second lock and ensure only authB can unlock it now
+    await time.increaseTo(ts2 + relUnlock2 + 1);
+    await expect(lock.connect(authB).Unlock(id2))
+      .to.emit(lock, "EIOBUnlocked")
+      .withArgs(withdrawer.address, LOCK_AMOUNT);
   });
 });
