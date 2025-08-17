@@ -8,6 +8,7 @@ contract EIOBLock is ReentrancyGuard {
 
     struct UnlockInfo {
         address payable withdrawalAddress;
+        address[] unlockAddresses;
         uint256 lockedAmount;
         uint256 unlockTime;
         bool withdrawn;
@@ -23,7 +24,7 @@ contract EIOBLock is ReentrancyGuard {
     event EIOBUnlocked(address indexed withdrawalAddress, uint amount);
 
     // _unlockTime is time from transaction (in seconds), not the absolute time.
-    function Lock(address payable _withdrawalAddress, uint256 _unlockTime) external payable returns (uint256 _id) {
+    function Lock(address payable _withdrawalAddress, address _unlockaddresses uint256 _unlockTime) external payable returns (uint256 _id) {
         require(msg.value > 0, 'You need to have > 0 EIOB locked up');
         require(_unlockTime < 10000000000, 'Unix timestamp must be in seconds, not milliseconds');
         require(_unlockTime > 0, 'Unlock time must be in future');
@@ -32,6 +33,7 @@ contract EIOBLock is ReentrancyGuard {
 
         _id = ++depositId;
         lockedInfo[_id].withdrawalAddress = _withdrawalAddress;
+        lockedInfo[_id].lockedAddresses = _lockedAddresses;
         lockedInfo[_id].lockedAmount = msg.value;
         lockedInfo[_id].unlockTime = block.timestamp + _unlockTime;
         lockedInfo[_id].withdrawn = false;
@@ -46,6 +48,14 @@ contract EIOBLock is ReentrancyGuard {
     function Unlock(uint256 _id) external nonReentrant {
         require(block.timestamp >= lockedInfo[_id].unlockTime, 'EIOB is locked');
         require(!lockedInfo[_id].withdrawn, 'EIOB is already withdrawn');
+        bool withdraw = false;
+        if (lockedInfo[_id].lockedAddresses.length == 0) withdraw = true;
+        else {
+            for (uint256 i = 0; i < lockedInfo[_id].lockedAddresses.length; i++) {
+                if(msg.sender == lockedInfo[_id].lockedAddresses[i]) withdraw = true;
+            }
+        }
+        require(withdraw, "Only authorized accounts can unlock");
 
         address payable withdrawalAddress = lockedInfo[_id].withdrawalAddress;
         uint256 lockedAmount = lockedInfo[_id].lockedAmount;
