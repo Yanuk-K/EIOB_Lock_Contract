@@ -20,7 +20,7 @@ contract EIOBLock is ReentrancyGuard {
     uint256 public depositId;
     uint256[] public allDepositIds;
 
-    event EIOBLocked(address indexed withdrawalAddress, address[] unlockAddresses, uint256 amount, uint256 unlockTime, uint256 depositId);
+    event EIOBLocked(address indexed withdrawalAddress, address[] calldata unlockAddresses, uint256 amount, uint256 unlockTime, uint256 depositId);
     event EIOBUnlocked(address indexed withdrawalAddress, uint amount);
 
     // _unlockTime is time from transaction (in seconds), not the absolute time.
