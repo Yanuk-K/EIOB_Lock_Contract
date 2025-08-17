@@ -8,7 +8,7 @@ contract EIOBLock is ReentrancyGuard {
 
     struct UnlockInfo {
         address payable withdrawalAddress;
-        address[] unlockAddresses;
+        address[] memory unlockAddresses;
         uint256 lockedAmount;
         uint256 unlockTime;
         bool withdrawn;
