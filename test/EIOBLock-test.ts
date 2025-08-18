@@ -133,21 +133,37 @@ describe("EIOBLock (authorised unlock addresses)", function () {
 
   it("any of several authorised addresses can unlock once the timelock expires", async function () {
     const relUnlock = ONE_YEAR_IN_SECS;
-    const { depositId, startTs } = await createLock(
+    const { depositId: id1, startTs: ts1 } = await createLock(
       withdrawer,
       [authA, authB],               // two accounts in whitelist
       relUnlock
     );
 
-    await time.increaseTo(startTs + relUnlock + 1);
+    await time.increaseTo(ts1 + relUnlock + 1);
 
     // authA can unlock
-    await expect(lock.connect(authA).Unlock(depositId))
+    await expect(lock.connect(authA).Unlock(id1))
       .to.emit(lock, "EIOBUnlocked")
       .withArgs(withdrawer.address, LOCK_AMOUNT);
 
-    const [, , , withdrawn] = await lock.getDepositDetails(depositId);
-    expect(withdrawn).to.be.true;
+    const [, , , withdrawn1] = await lock.getDepositDetails(id1);
+    expect(withdrawn1).to.be.true;
+
+    const { depositId: id2, startTs: ts2 } = await createLock(
+      withdrawer,
+      [authA, authB],               // two accounts in whitelist
+      relUnlock
+    );
+
+    await time.increaseTo(ts2 + relUnlock + 1);
+
+    // authA can unlock
+    await expect(lock.connect(authB).Unlock(id2))
+      .to.emit(lock, "EIOBUnlocked")
+      .withArgs(withdrawer.address, LOCK_AMOUNT);
+
+    const [, , , withdrawn2] = await lock.getDepositDetails(id2);
+    expect(withdrawn2).to.be.true;
   });
 
   it("a second authorised address cannot unlock the same deposit after it has been withdrawn", async function () {
@@ -237,6 +253,10 @@ describe("EIOBLock (authorised unlock addresses)", function () {
     // Fast‑forward to after the first lock but **before** the second one expires
     await time.increaseTo(ts1 + relUnlock1 + 1);
 
+    // authB cannot unlock deposit 1
+    await expect(lock.connect(authB).Unlock(id1))
+      .to.be.revertedWith("Only authorized accounts can unlock");
+    
     // authA can unlock deposit 1
     await expect(lock.connect(authA).Unlock(id1))
       .to.emit(lock, "EIOBUnlocked")
@@ -248,6 +268,12 @@ describe("EIOBLock (authorised unlock addresses)", function () {
 
     // Move forward beyond the second lock and ensure only authB can unlock it now
     await time.increaseTo(ts2 + relUnlock2 + 1);
+
+    // authA cannot unlock deposit 2
+    await expect(lock.connect(authA).Unlock(id2))
+      .to.be.revertedWith("Only authorized accounts can unlock");
+
+    // authB can unlock deposit 2
     await expect(lock.connect(authB).Unlock(id2))
       .to.emit(lock, "EIOBUnlocked")
       .withArgs(withdrawer.address, LOCK_AMOUNT);
